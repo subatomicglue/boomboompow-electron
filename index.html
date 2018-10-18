@@ -1,0 +1,350 @@
+<html>
+  <head>
+  </head>
+  <body>
+    <div class='column top'>
+      <div class='row'>
+        <div class='spacer'></div>
+        <div class='spacer'></div>
+        <div id='lanecount_inc_button' class='plus' onclick='lanes++; init()'></div>
+      </div>
+      <div class='row'>
+        <div class='spacer'></div>
+        <div class='spacer'></div>
+        <div id='lanecount_dec_button' class='minus' onclick='lanes--; init()'></div>
+      </div>
+      <div id='slotcount_dec_button' class='minus' onclick='slots--; init()'></div>
+      <div id='slotcount_inc_button' class='plus' onclick='slots++; init()'></div>
+    </div>
+    <div class='column top'>
+      <div class='spacer'></div>
+    </div>
+    <div id='sequencerUI' class='column top'><!-- we will generate the sequencer UI in here --></div>
+    <div class='column top'>
+      <div class='spacer'></div>
+    </div>
+    <div class='column top'>
+      <div class='row'>
+        <div id='tempo_faster_button' class='plus' onclick='tempoFaster()'></div>
+      </div>
+      <div class='row'>
+        <div id='tempo_slower_button' class='minus' onclick='tempoSlower()'></div>
+      </div>
+    </div>
+    <div class='row'>
+      <div class='spacer'></div>
+      <div class='spacer'></div>
+      <div class='spacer'></div>
+      <div class='spacer'></div>
+      <div class='spacer'></div>
+      <div class='spacer'></div>
+      <div id='stop_button' class='stop' onclick='playing=false'></div>
+      <div id='play_button' class='play' onclick='playing=true; counter=0'></div>
+    </div>
+    <input style="display:none;" type="file" id="imageupload" accept="audio/*" onchange='setAudio'>
+    <style>
+      body { font-size: 0; }
+      .on, .set, .off, .play, .stop, .plus, .minus, .spacer, .grey {
+        border-style: solid;
+        border-width: 2px;
+        border-color: black;
+        width: 24px;
+        height: 24px;
+        display:inline-block;
+      }
+      .column {
+        display:inline-block;
+      }
+      .top {
+        vertical-align: top;
+      }
+      .row, .lane {
+        height: 28px;
+      }
+      .on     { background-color: coral; }
+      .set    { background-color: red; }
+      .off    { background-color: #333333; }
+      .lane   { background-color: white; }
+      .play   { background-color: greenyellow; }
+      .stop   { background-color: red; }
+      .plus   { background-color: blue; }
+      .minus  { background-color: lightblue; }
+      body, .spacer { background-color: black; }
+      .grey   { background-color: grey; }
+    </style>
+
+    <!-- WebAudio has much lower latency than Audio.  If present, then WebAudio will be used instead of Audio -->
+    <script src="webaudio.js"></script>
+
+    <script>
+      const electronremote = require('electron').remote;
+      const mainProcess = electronremote.require('./main')
+
+      let newDriveInserted = (dir) => {
+        console.log( "dirchanged:" );
+        console.log( dir );
+      };
+
+      // keyboard interface
+      document.addEventListener("keyup", (e) => {
+        console.log( electronremote.app );
+        switch (event.key) {
+          case 'q':
+          case 'Q':
+          case 'Escape':
+          case 27:
+            electronremote.getCurrentWindow().close();
+            break;
+          case ' ':
+            playing=!playing;
+            break;
+          case '=':
+            tempoFaster();
+            break;
+          case '-':
+            tempoSlower();
+            break;
+          default:
+            console.log( e );
+        }
+
+        // direct-trigger notes
+        if (0 <= event.key && event.key <= 9) {
+          let keyInt = parseInt( event.key );
+          let lane = (keyInt+9)%10;
+          if (lane < seq.length ) {
+            seq[lane].soundmanager.trigger();
+          }
+        }
+      });
+
+      // F12 open dev tools and F5 reload
+      document.addEventListener("keydown", function (e) {
+        if (e.which === 123) {
+          electronremote.getCurrentWindow().toggleDevTools();
+        } else if (e.which === 116 || e.key == 'r') {
+          location.reload();
+        }
+      });
+
+      // conversion from note offset (+1, -1, -5, etc.) to AudioBufferSourceNode.playbackRate
+      // If you pitch shift by too many semitones (e.g., by calling playNote(24);)
+      // you will start to hear distortions.
+      function noteToPlaybackRate( semitones ) {
+        var semitoneRatio = Math.pow(2, 1/12);
+        return Math.pow(semitoneRatio, semitones);
+      }
+
+      // conversion from note offset (+1, -1, -5, etc.) to AudioBufferSourceNode.detune
+      // If you pitch shift by too many semitones (e.g., by calling playNote(24);)
+      // you will start to hear distortions.
+      function noteToDetune( semitones ) {
+        return semitones * 100;
+      }
+
+      // configuration parameters:
+      let lanes = 16       // How many lanes
+      let slots = 16      // How many cells in each lane
+      let speed = 200     // How fast to increment the song position
+                          //  {counter} by 1 (in milliseconds)
+      let lane_sounds = [ // What sound to use for each lane
+        { filename: "env9091.wav", pool: 4 },
+        { filename: "roland808sd101011.wav", pool: 4 },
+        { filename: "roland808ch39.wav", pool: 4 },
+        { filename: "linn14.wav", pool: 4 },
+        { filename: "env9091.wav", pool: 4 },
+        { filename: "roland808sd101011.wav", pool: 4 },
+        { filename: "roland808ch39.wav", pool: 4 },
+        { filename: "linn14.wav", pool: 4 },
+        { filename: "env9091.wav", pool: 4 },
+        { filename: "roland808sd101011.wav", pool: 4 },
+        { filename: "roland808ch39.wav", pool: 4 },
+        { filename: "linn14.wav", pool: 4 },
+        { filename: "env9091.wav", pool: 4 },
+        { filename: "roland808sd101011.wav", pool: 4 },
+        { filename: "roland808ch39.wav", pool: 4 },
+        { filename: "linn14.wav", pool: 4 },
+      ]
+      let counter = 0     // The current song position
+                          // (increments by 1 every {speed} milliseconds)
+      let seq = []        // Lane & slot data (our sequencer)
+                          // array of arrays  (i.e. array of seq_lanes objects,
+                          //             which have arrays of slotdata)
+      let playing = false;// we'll advance the counter when this is true
+
+      // called when clicking on any slot
+      function onSlotClick( slotdata ) {
+        // toggle the state from 'off' (false) to 'set' (true)
+        slotdata.state = !slotdata.state
+      }
+
+      // same functionality as "new Audio(filename)", but with fallback for github preview (not needed, delete this!)
+      function newAudio( filename ) {
+        let audio = new Audio( filename )
+
+        // fallback to github located file preview...
+        audio.onerror = function() {
+          audio.onerror = () => console.log( "already had an error " + audio.src )
+          console.log("File " + audio.src + " does not exist - running in github preview mode?")
+          audio.src = "https://crossorigin.me/https://media.githubusercontent.com/media/subatomicglue/drummachine/master/" + filename
+          //console.log( "Falling Back to: " + audio.src )
+          audio.load();
+        };
+
+        return audio
+      }
+
+      // set the audio for a lane from a file upload
+      function setAudio( url, whichlane ) {
+        for (let sound of seq[whichlane].soundmanager.sound_pool) {
+          //sound.src = URL.createObjectURL( file ) // < doesnt work with dataurl from electron's fs.readFile
+          sound.src = url; // works with dataurl or url
+          sound.load()
+        }
+      }
+
+      function tempoFaster() {
+        speed = speed > 0 ? speed/1.1 : 0; restartTimer()
+      }
+      function tempoSlower() {
+        speed = speed < 1000 ? speed*1.1 : 1000; restartTimer()
+      }
+
+      // initialize the sequencer track
+      // everything is driven off the configuration parameters
+      function init() {
+        // set up the lanes
+        seq = [];
+        for (let lane = 0; lane < lanes; ++lane) {
+          // setup a tiny sound manager for each lane
+          // each lane has a pool of sounds: {pool} number of duplicates of the same sound 
+          // so that sounds can overlap when played too close together in time
+          let sm = {sound_pool: [], pool_counter: 0}
+          let lane_config = Object.assign({filename:'default.wav', pool:4}, lane_sounds[lane] ? lane_sounds[lane] : {})
+          for (let i = 0; i < lane_config.pool; ++i) {
+            sm.sound_pool.push( newAudio( lane_config.filename ) )
+          }
+          // this is how we'll trigger a sound from the pool
+          sm.trigger = (note = 1.0) => {
+            // play _next_ sound, cycling in roundrobin order (allows last one to finish playing)
+            sm.sound_pool[sm.pool_counter].playbackRate = noteToPlaybackRate( note );
+            sm.sound_pool[sm.pool_counter].play()
+            sm.pool_counter = (sm.pool_counter + 1) % sm.sound_pool.length
+          }
+
+          // initialize the {slots} number of slots for each lane
+          let seq_lane_slots = []
+          for (let slot = 0; slot < slots; ++slot) {
+            // each slot has slotdata
+            let slotdata = {
+              element: undefined, //document.getElementById( 'a' + lane + slot ),
+              state: false,
+              note: 1,
+            }
+            seq_lane_slots.push( slotdata )
+          }
+
+          // add the lane
+          seq.push( {soundmanager: sm, slots: seq_lane_slots} )
+        }
+
+        // create the sequencer UI
+        // add the lanes/slots into the DOM, like this:
+        // <div id="lane0" class="lane">
+        //   <div id="a00"></div>
+        //   ...
+        //   <div id="a08"></div>
+        // </div>
+        sequencerUI.innerHTML = '';
+        for (let lane_num = 0; lane_num < lanes; ++lane_num) {
+          let lane = document.createElement("div")
+          lane.id = 'lane' + lane_num;
+          lane.className = 'lane';
+          if (0) {
+            let file_inp = document.createElement("input")
+            file_inp.style = "display:none;"
+            file_inp.type="file"
+            file_inp.id="imageupload"+lane_num
+            file_inp.accept="audio/*"
+            file_inp.onchange = (e) => setAudio(file_inp.files[0],lane_num)
+            lane.appendChild( file_inp )
+          }
+          let file_req = document.createElement("div")
+          file_req.id='audiofileupload_button'
+          file_req.className="grey"
+          if (0) {
+            file_req.onclick = () => { document.getElementById('imageupload'+lane_num).click(); return true; }
+          } else {
+            file_req.onclick = () => {
+              mainProcess.selectAudioFile(
+                [{name: 'audio', extensions: ['wav','mp3','webm','m4a']}],
+                (dataurl, name, mimetype) => {
+                  setAudio(dataurl,lane_num);
+                });
+              return true;
+            }
+          }
+          lane.appendChild( file_req )
+          let spacer = document.createElement("div")
+          spacer.className="spacer"
+          lane.appendChild( spacer )
+          // create the slots
+          for (let slot_num = 0; slot_num < slots; ++slot_num) {
+            let slot = document.createElement("div")
+            slot.id = 'a' + lane_num + slot_num
+            slot.className = 'off'
+            lane.appendChild( slot )
+
+            // so we can find the slot element easily
+            let slotdata = seq[lane_num].slots[slot_num];
+            slotdata.element = slot;
+            // setup the cell's onclick to call onSlotClick
+            slot.onclick = () => onSlotClick( slotdata )
+          }
+          // add the lane div to the spot we declared in html
+          sequencerUI.appendChild( lane )
+        }
+
+        console.log( seq );
+
+        // start the clock
+        restartTimer()
+      }
+
+      // step the sequencer one step
+      function step() {
+        // reset all cells to show their 'set' state (or 'off' if not set)
+        for (let seq_lane of seq) {
+          for (let slot of seq_lane.slots) {
+            slot.element.className = slot.state ? 'set' : 'off'
+          }
+        }
+
+        // show where the song position is by turning 'on' the cell
+        for (let lane in seq) {
+          seq[lane].slots[counter].element.className = 'on'
+
+          // if the cell is 'set', then trigger it!
+          if (playing && seq[lane].slots[counter].state) {
+            //trigger( seq[lane].slots[counter] );
+            seq[lane].soundmanager.trigger( seq[lane].slots[counter].note );
+          }
+        }
+
+        // advance the song pointer (use mod so it wraps around)
+        counter = (counter + (playing?1:0)) % slots
+      }
+
+      // the timer is our clock that 'steps' the sequencer forward
+      let timer_id;
+      function restartTimer() {
+        if (timer_id)
+          clearInterval( timer_id ) 
+        timer_id = setInterval( () => step(), speed )
+      }
+
+      // go!
+      init()
+    </script>
+  </body>
+</html>
