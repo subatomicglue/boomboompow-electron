@@ -13,6 +13,8 @@ npm run start-prod  # start up in production mode
 ```
 npm install
 npm run package-mac # or lin or win
+cd "release-builds/Boom Boom POW-darwin-x64"
+open "Boom Boom POW.app"
 ```
 
 # History:
